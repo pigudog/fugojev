@@ -16,7 +16,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
 # Qwen3.5 (Gated DeltaNet) backbone: transformers 5 model code plus the Triton kernels.
 qwen35 = [
     "transformers>=5.17,<6",
@@ -32,5 +31,3 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]

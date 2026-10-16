@@ -95,7 +95,6 @@ To retrain:
 ```bash
 python -m fugojev.train --backbone models/Qwen3.5-0.8B-Base --out runs/ec --epochs 4 --lora 8 --max-state 4096
 python -m fugojev.evaluate --run runs/ec/epoch-3 --base models/Qwen3.5-0.8B-Base --split dev --dtype bf16
-pytest
 ```
 
 `data/`, `runs/` and `models/` are git-ignored. Never commit notes, names, ID numbers or admission numbers.

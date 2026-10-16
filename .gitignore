@@ -12,3 +12,4 @@ build/
 .venv/
 .cursor/
 .ipynb_checkpoints/
+tests/
