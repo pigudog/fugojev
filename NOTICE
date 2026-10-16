@@ -1,0 +1,17 @@
+fugojev adapts the decision-model design from MedJev (Jun Ma, Apache-2.0,
+https://github.com/JunMa11/MedJev). MedJev adapts kev (Jared Palmer, Apache-2.0,
+https://github.com/jaredpalmer/kev).
+
+Files adapted from that design:
+
+- src/fugojev/model.py — pointer head, block-causal question isolation, encode(),
+  the per-question row form for hybrid (Gated DeltaNet) backbones (rows_of /
+  forward_rows_batch), and the state-prefix cache for serving (probs_and_prefix /
+  probs_with_prefix)
+- src/fugojev/records.py — labelled-request materialize and choice-option shuffle
+- src/fugojev/train.py — cross-entropy plus ranked probability score on score questions
+- src/fugojev/checkpoint.py — LoRA adapter plus pointer-head checkpoint
+
+The endometrial questions, corpus join, and state builder are original to this
+repository. A read-only clone of MedJev may live in tmp_code/MedJev and is not
+part of the installed package.
