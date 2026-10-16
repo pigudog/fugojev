@@ -1,0 +1,55 @@
+{
+  "system": "rule baseline",
+  "n_records": 36,
+  "micro": {
+    "n": 169,
+    "accuracy": 0.9822485207100592
+  },
+  "questions": {
+    "figo": {
+      "n": 36,
+      "accuracy": 0.9166666666666666,
+      "macro_f1": 0.9053658536585365,
+      "majority_accuracy": 0.6111111111111112
+    },
+    "grade": {
+      "n": 32,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.5
+    },
+    "lvsi": {
+      "n": 31,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.8387096774193549
+    },
+    "lymph_node": {
+      "n": 36,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.8888888888888888
+    },
+    "muscle_invasion": {
+      "n": 34,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.6176470588235294
+    }
+  },
+  "split": "dev",
+  "defaults": {
+    "figo": "IA",
+    "muscle_invasion": "浸润深度小于1/2肌层",
+    "lvsi": "false",
+    "lymph_node": "none",
+    "grade": "I级"
+  },
+  "rule_coverage": {
+    "figo": 0.9444444444444444,
+    "grade": 0.96875,
+    "lvsi": 0.967741935483871,
+    "lymph_node": 0.9444444444444444,
+    "muscle_invasion": 0.9705882352941176
+  }
+}

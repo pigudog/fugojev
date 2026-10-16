@@ -1,0 +1,48 @@
+{
+  "system": "zero-shot letter logits",
+  "n_records": 36,
+  "micro": {
+    "n": 169,
+    "accuracy": 0.46153846153846156
+  },
+  "questions": {
+    "figo": {
+      "n": 36,
+      "accuracy": 0.1388888888888889,
+      "macro_f1": 0.08956521739130434,
+      "majority_accuracy": 0.6111111111111112
+    },
+    "grade": {
+      "n": 32,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.5
+    },
+    "lvsi": {
+      "n": 31,
+      "accuracy": 0.8387096774193549,
+      "macro_f1": 0.45614035087719296,
+      "majority_accuracy": 0.8387096774193549
+    },
+    "lymph_node": {
+      "n": 36,
+      "accuracy": 0.1111111111111111,
+      "macro_f1": 0.10256410256410256,
+      "majority_accuracy": 0.8888888888888888
+    },
+    "muscle_invasion": {
+      "n": 34,
+      "accuracy": 0.3235294117647059,
+      "macro_f1": 0.16296296296296298,
+      "majority_accuracy": 0.6176470588235294
+    }
+  },
+  "runtime": {
+    "latency_ms_per_record_median": 211.47286286577582,
+    "latency_ms_per_record_mean": 223.51362745717375,
+    "peak_memory_gb": 1.0673637390136719
+  },
+  "split": "dev",
+  "model": "models/Qwen2.5-0.5B",
+  "consistency_rule": false
+}

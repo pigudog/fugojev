@@ -11,6 +11,15 @@ Files adapted from that design:
 - src/fugojev/records.py — labelled-request materialize and choice-option shuffle
 - src/fugojev/train.py — cross-entropy plus ranked probability score on score questions
 - src/fugojev/checkpoint.py — LoRA adapter plus pointer-head checkpoint
+- src/fugojev/api.py — request/answer shapes and confidence formulas (MedJev api.py, from kev)
+- src/fugojev/base_probe.py — zero-shot letter-logit readout of the base model
+- src/fugojev/calibrate.py — per-question temperature + class-prior correction
+- src/fugojev/compare.py, src/fugojev/bench_runtime.py — side-by-side table and
+  serving-cost benchmark
+
+The rule baseline (src/fugojev/baseline.py) follows MedJev's role for it (the floor a
+fine-tuned model must clear) but its patterns are written for Chinese pathology
+templates and share no code.
 
 The endometrial questions, corpus join, and state builder are original to this
 repository. A read-only clone of MedJev may live in tmp_code/MedJev and is not
