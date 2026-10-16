@@ -37,7 +37,7 @@ Runtime (`fugojev.bench_runtime`): on an RTX 4090 in bf16, reading the notes cos
 ```bash
 conda create -n fugojev python=3.12 -y && conda activate fugojev
 pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu130
-pip install -e ".[dev,qwen35]" --upgrade-strategy only-if-needed
+pip install -e ".[qwen35]" --upgrade-strategy only-if-needed
 ```
 
 ## Download the base model
