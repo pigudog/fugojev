@@ -1,7 +1,7 @@
 """Put the systems side by side on one split, as a markdown table.
 
     python -m fugojev.compare rule=runs/baseline/dev.json zero-shot=runs/probe/q35-dev.json \\
-        fugojev=runs/ec-q35/dev-epoch-3.json
+        fugojev=reports/dev/fugojev-0.8b.json
 
 Every input is a report in the shape `evaluate`, `baseline` and `base_probe` write
 (`report_from_buckets`), so the table needs no per-system adapters. Cells are

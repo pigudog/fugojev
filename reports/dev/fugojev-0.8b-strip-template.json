@@ -1,0 +1,48 @@
+{
+ "system": "fugojev",
+ "n_records": 36,
+ "micro": {
+  "n": 169,
+  "accuracy": 0.6272189349112426
+ },
+ "questions": {
+  "figo": {
+   "n": 36,
+   "accuracy": 0.4444444444444444,
+   "macro_f1": 0.4268725868725869,
+   "majority_accuracy": 0.6111111111111112
+  },
+  "grade": {
+   "n": 32,
+   "accuracy": 0.375,
+   "macro_f1": 0.37542087542087543,
+   "majority_accuracy": 0.5
+  },
+  "lvsi": {
+   "n": 31,
+   "accuracy": 0.8387096774193549,
+   "macro_f1": 0.45614035087719296,
+   "majority_accuracy": 0.8387096774193549
+  },
+  "lymph_node": {
+   "n": 36,
+   "accuracy": 0.8888888888888888,
+   "macro_f1": 0.47058823529411764,
+   "majority_accuracy": 0.8888888888888888
+  },
+  "muscle_invasion": {
+   "n": 34,
+   "accuracy": 0.5882352941176471,
+   "macro_f1": 0.35375816993464054,
+   "majority_accuracy": 0.6176470588235294
+  }
+ },
+ "runtime": {
+  "latency_ms_per_record_median": 233.25733607634902,
+  "latency_ms_per_record_mean": 304.5206188301866,
+  "peak_memory_gb": 1.8851728439331055
+ },
+ "split": "dev",
+ "ablation": "strip-template",
+ "run": "weights/ec-v1"
+}

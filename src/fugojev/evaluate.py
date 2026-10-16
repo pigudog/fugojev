@@ -12,7 +12,10 @@ from fugojev.checkpoint import load_checkpoint
 from fugojev.model import MAX_STATE
 from fugojev.questions import consistent_predictions
 from fugojev.records import load_records, materialize
-from fugojev.split import canonical_split, split_of
+from fugojev.split import FOLDS, canonical_split, fold_records, split_of
+
+# Ablation names only; `fugojev.ablate` imports from `baseline`, which imports this module.
+ABLATIONS = ("none", "paraphrase", "strip-template", "pathology-only")
 
 
 def classification_stats(golds, preds) -> dict:
@@ -82,21 +85,23 @@ def score_requests(model, tokenizer, requests, max_state=MAX_STATE, calibration=
                 latencies.append((time.perf_counter() - started) * 1000)
                 golds = {}
                 predicted = {}
+                record_rows = {}
                 for prob, qid, label, keys in zip(
                     probabilities, encoded["qids"], encoded["labels"], encoded["keys"]
                 ):
                     values = [float(p) for p in prob]
                     if calibration:
                         values = apply_calibration(values, keys, calibration.get(qid))
-                    if rows is not None:
-                        rows.append({"index": index, "qid": qid, "keys": list(keys),
-                                     "gold": keys[label], "probs": values})
+                    record_rows[qid] = {"index": index, "qid": qid, "keys": list(keys),
+                                        "gold": keys[label], "probs": values}
                     golds[qid] = keys[label]
                     predicted[qid] = keys[max(range(len(values)), key=values.__getitem__)]
                 predicted = consistent_predictions(predicted)
                 for qid, gold in golds.items():
                     buckets[qid]["golds"].append(gold)
                     buckets[qid]["preds"].append(predicted[qid])
+                    if rows is not None:
+                        rows.append({**record_rows[qid], "pred": predicted[qid]})
     finally:
         model.train(was_training)
     latencies.sort()
@@ -110,6 +115,28 @@ def score_requests(model, tokenizer, requests, max_state=MAX_STATE, calibration=
 
 def records_for_split(records, split):
     return [row for row in records if split_of(str(row["hospital_id"])) == split]
+
+
+def select_records(args):
+    """Records named by `--split` or `--fold`, with the test lock and the ablation applied.
+    Returns (records, split name used in reports)."""
+    from fugojev.ablate import ablate_records
+
+    all_records = load_records(args.records)
+    if getattr(args, "fold", None) is not None:
+        records = fold_records(all_records, args.fold, args.folds, held_out=True)
+        split = f"fold-{args.fold}/{args.folds}"
+    else:
+        split = canonical_split(args.split)
+        if split == "test" and not args.allow_test:
+            raise SystemExit("test split is locked; pass --allow-test")
+        records = records_for_split(all_records, split)
+    if not records:
+        raise SystemExit(f"no records in {split}")
+    ablation = getattr(args, "ablation", "none")
+    if ablation != "none":
+        records = ablate_records(records, ablation)
+    return records, split
 
 
 def format_report(report) -> str:
@@ -135,7 +162,10 @@ def main(argv=None):
     parser.add_argument("--run", required=True)
     parser.add_argument("--records", default="data/ec/records.jsonl")
     parser.add_argument("--split", default="dev")
+    parser.add_argument("--fold", type=int, default=None, help="score the held-out records of this CV fold instead of --split")
+    parser.add_argument("--folds", type=int, default=FOLDS)
     parser.add_argument("--allow-test", action="store_true")
+    parser.add_argument("--ablation", choices=ABLATIONS, default="none", help="input ablation applied before scoring")
     parser.add_argument("--device", default=None)
     parser.add_argument("--dtype", choices=["fp32", "bf16"], default="fp32")
     parser.add_argument("--base", default=None, help="override the backbone path stored in the checkpoint")
@@ -143,19 +173,15 @@ def main(argv=None):
     parser.add_argument("--rows", default="", help="write per-question probability rows here (for calibrate.py)")
     parser.add_argument("--out", default="")
     args = parser.parse_args(argv)
-    split = canonical_split(args.split)
-    if split == "test" and not args.allow_test:
-        raise SystemExit("test split is locked; pass --allow-test")
+    records, split = select_records(args)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float32
-    records = records_for_split(load_records(args.records), split)
-    if not records:
-        raise SystemExit(f"no records in split {split}")
     tokenizer, model = load_checkpoint(args.run, device, dtype=dtype, base=args.base)
     calibration = json.loads(Path(args.calibration).read_text(encoding="utf-8")) if args.calibration else None
     rows = [] if args.rows else None
     report = score_requests(model, tokenizer, records, max_state=model.max_state, calibration=calibration, rows=rows)
     report["split"] = split
+    report["ablation"] = args.ablation
     report["run"] = str(args.run)
     if calibration:
         report["calibration"] = str(args.calibration)

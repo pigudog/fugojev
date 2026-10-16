@@ -2,7 +2,7 @@
 
 **Fu**dan University **G**ynecologic **O**ncology **Jev** — a [MedJev](https://github.com/JunMa11/MedJev)-style decision model built specifically for gynecologic oncology.
 
-The goal is fast FIGO staging of gynecologic cancers from clinical notes on a CPU or a small GPU: a sub-1B frozen backbone, a 42 MB adapter, and closed-set answers with probabilities instead of generated text. **Version 1.1.0** (tag `v1.1.0`) solves endometrial cancer, FIGO 2009; cervical and ovarian cancer are planned for later versions. 1.1 adds the reference systems (rule baseline, zero-shot probe), calibration, a runtime benchmark and a JSON request API on top of the 1.0 model, whose weights are unchanged.
+The goal is fast FIGO staging of gynecologic cancers from clinical notes on a CPU or a small GPU: a sub-1B frozen backbone, a 42 MB adapter, and closed-set answers with probabilities instead of generated text. **Version 1.2.0** (tag `v1.2.0`) solves endometrial cancer, FIGO 2009; cervical and ovarian cancer are planned for later versions. 1.1 added the reference systems (rule baseline, zero-shot probe), calibration, a runtime benchmark and a JSON request API; 1.2 adds five-fold cross-validation and input ablations, which revise the headline: on this centre's templated pathology the rule baseline stages as well as or better than the model, and the model's advantage appears only when the template is removed. The shipped weights are unchanged since 1.0.
 
 Given the pathology, imaging, outpatient, admission and operative notes of one patient, the model answers five multiple-choice questions: FIGO stage, depth of myometrial invasion, lymphovascular space invasion, lymph-node extent, and histologic grade.
 
@@ -12,7 +12,42 @@ A frozen `Qwen/Qwen3.5-0.8B-Base` backbone with a LoRA adapter (r=8, 5.9M traina
 
 ## Results
 
-321 patients with notes, split by hashed admission number into train 257 / dev 36 / test 28. Dev set (36 patients, 169 questions; used for model selection, so not a final score — the test set has not been opened). Accuracy (macro-F1); `python -m fugojev.compare` produces this table from the reports in `reports/dev/`:
+321 patients with notes, split by hashed admission number into train 257 / dev 36 / test 28. The test set has not been opened.
+
+### Five-fold cross-validation (293 patients)
+
+The 293 non-test patients are hashed into five folds (57 / 60 / 69 / 57 / 50). One model per fold, trained on the other four with the recipe above but 3 epochs fixed in advance (no epoch selection on the held-out fold); the rule baseline's defaults are the training-fold majority. Rows from the five held-out folds are pooled; 95% CIs are patient-level bootstrap (2000 resamples), the p-value is an exact two-sided McNemar test on discordant patients. `reports/cv/cv-summary.md` has every ablation; `python -m fugojev.cv report` regenerates it.
+
+| Question | fugojev 0.8B | rule baseline | Δ [95% CI] | McNemar p | majority |
+|---|---|---|---|---|---|
+| FIGO stage (n=292) | 0.839 [0.798, 0.880] | **0.884** [0.846, 0.918] | −0.045 [−0.086, −0.003] | 0.053 | 0.630 |
+| Myometrial invasion (n=288) | 0.990 | 0.993 | −0.003 | 1.00 | 0.580 |
+| Lymph-node extent (n=283) | 0.965 | 0.979 | −0.014 | 0.29 | 0.890 |
+| LVSI (n=271) | 0.996 | 0.993 | +0.004 | 1.00 | 0.742 |
+| Grade (n=267) | 0.978 | 0.963 | +0.015 | 0.39 | 0.423 |
+| micro (1401 questions) | 0.952 | 0.961 | | | |
+
+Per-fold FIGO accuracy is 0.84 / 0.72 / 0.94 / 0.83 / 0.86 for the model and 0.95 / 0.80 / 0.88 / 0.90 / 0.90 for the rules, so the dev figure below (0.972 on 36 patients) is at the lucky end of the spread. The four component questions are at ceiling for both systems. The model loses FIGO on the rare stages that are defined by a composition rule with only a handful of training examples: stage II (cervical stroma) 6/17 vs 12/17, IIIA 0/5 vs 3/5, IIIC2 1/8 vs 5/8; IA, IB and IVB are equal. Composing the stage from the model's own component heads instead of its FIGO head recovers only 0.3 points, because the missed stages (II, IIIA, IIIB) have no component question.
+
+### Input ablations (same folds, same models)
+
+The held-out notes are rewritten before scoring; training is untouched. `paraphrase` turns every templated pathology cell (`肌层浸润: 浸润深度<1/2肌层` …) into one of several prose sentences chosen deterministically per patient, keeping the evidence but changing its surface form. `strip-template` deletes the cells, which removes the evidence (the word 肌层 then survives in 3% of records, 脉管 and grade in none). `pathology-only` keeps only the pathology section.
+
+| Ablation | Question | fugojev 0.8B | rule baseline | Δ [95% CI] | McNemar p |
+|---|---|---|---|---|---|
+| paraphrase | Myometrial invasion | **0.965** | 0.747 | +0.219 [0.168, 0.270] | <0.001 |
+| | LVSI | **0.993** | 0.867 | +0.125 [0.085, 0.168] | <0.001 |
+| | Lymph-node extent | **0.954** | 0.890 | +0.064 [0.031, 0.099] | 0.001 |
+| | Grade | 0.805 | **0.921** | −0.116 [−0.169, −0.060] | <0.001 |
+| | FIGO stage | 0.743 | 0.764 | −0.021 [−0.085, 0.041] | 0.59 |
+| strip-template | FIGO stage | 0.360 | 0.644 | −0.284 | <0.001 |
+| pathology-only | FIGO stage | 0.849 | 0.887 | −0.038 [−0.075, 0.000] | 0.09 |
+
+Read together: the rules match the template, the model reads the text. When the same facts are stated in prose the rules drop 10–25 points on the three pathology components and the model stays within 1–3 points of its template score; grade is the exception, because the prose variants of 中分化/低分化 were not in training and the rules still catch the `G` letter. With the evidence removed both systems fall to or below the majority floor, so neither is guessing from the rest of the record. Imaging and operative notes add under one point over pathology alone.
+
+### Development set (36 patients)
+
+Used for epoch selection, so not a final score. Accuracy (macro-F1); `python -m fugojev.compare` produces this table from the reports in `reports/dev/`:
 
 | Question | fugojev 0.8B | rule baseline | zero-shot 0.8B | fugojev 0.5B | majority |
 |---|---|---|---|---|---|
@@ -24,7 +59,7 @@ A frozen `Qwen/Qwen3.5-0.8B-Base` backbone with a LoRA adapter (r=8, 5.9M traina
 | micro (169 questions) | **0.988** | 0.982 | 0.456 | 0.882 | |
 | latency per patient (4090) | 233 ms | — | 416 ms | 89 ms | |
 
-- *rule baseline* (`fugojev.baseline`): regular expressions over the templated pathology fields (`肌层浸润:`, `脉管侵犯:（-）`, `淋巴结转移情况:总数（0/24）` …), composed into a stage; patterns tuned on train only. On this centre's templated reports it is a strong floor: the components are read off exactly, and the gap to the model is in stage composition (train FIGO 0.879 vs 0.91). The model's advantage is that it was not written for this template.
+- *rule baseline* (`fugojev.baseline`): regular expressions over the templated pathology fields (`肌层浸润:`, `脉管侵犯:（-）`, `淋巴结转移情况:总数（0/24）` …), composed into a stage; patterns tuned on train only. On this centre's templated reports it is the system to beat, and under cross-validation the model does not beat it.
 - *zero-shot* (`fugojev.base_probe`): the same base model, no adapter, answer read from next-token letter logits. Below the majority floor on every question except grade, so the score comes from the training, not the backbone alone.
 - *fugojev 0.5B*: same recipe on Qwen2.5-0.5B.
 
@@ -95,6 +130,15 @@ To retrain:
 ```bash
 python -m fugojev.train --backbone models/Qwen3.5-0.8B-Base --out runs/ec --epochs 4 --lora 8 --max-state 4096
 python -m fugojev.evaluate --run runs/ec/epoch-3 --base models/Qwen3.5-0.8B-Base --split dev --dtype bf16
+```
+
+Cross-validation and ablations (about 3 h training plus 25 min scoring on one 4090; `reports/cv/` holds the pooled summary):
+
+```bash
+python -m fugojev.cv train --backbone models/Qwen3.5-0.8B-Base --out runs/cv --epochs 3
+python -m fugojev.cv score --out runs/cv --epoch 3          # 5 folds × {none, paraphrase, strip-template, pathology-only} × {model, rule}
+python -m fugojev.cv report --out runs/cv                   # writes runs/cv/cv-summary.{json,md}
+python -m fugojev.evaluate --run weights/ec-v1 --base models/Qwen3.5-0.8B-Base --split dev --ablation paraphrase
 ```
 
 `data/`, `runs/` and `models/` are git-ignored. Never commit notes, names, ID numbers or admission numbers.

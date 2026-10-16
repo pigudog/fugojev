@@ -17,6 +17,7 @@ from fugojev.evaluate import records_for_split, score_requests
 from fugojev.model import BRANCH_SLACK, DEFAULT_BACKBONE, DecisionModel, load_tokenizer
 from fugojev.records import load_records, materialize, permute_choice_options
 from fugojev.checkpoint import save_checkpoint
+from fugojev.split import FOLDS, fold_records
 
 
 def label_name(question):
@@ -126,6 +127,9 @@ def main(argv=None):
     parser.add_argument("--checkpointing", type=int, choices=[0, 1], default=1,
                         help="gradient checkpointing on the backbone; the row form needs it on 24 GB")
     parser.add_argument("--limit", type=int, default=0, help="if >0, use this many training records")
+    parser.add_argument("--fold", type=int, default=None,
+                        help="cross-validation: train on the non-test records outside this fold, log the fold")
+    parser.add_argument("--folds", type=int, default=FOLDS)
     args = parser.parse_args(argv)
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -138,8 +142,12 @@ def main(argv=None):
     if out_dir.exists() and any(out_dir.iterdir()):
         raise SystemExit(f"refusing to overwrite an existing run: {args.out}")
     rows = load_records(args.records)
-    train_rows = records_for_split(rows, "train")
-    dev_rows = records_for_split(rows, "dev")
+    if args.fold is None:
+        train_rows = records_for_split(rows, "train")
+        dev_rows = records_for_split(rows, "dev")
+    else:
+        train_rows = fold_records(rows, args.fold, args.folds, held_out=False)
+        dev_rows = fold_records(rows, args.fold, args.folds, held_out=True)
     if args.limit:
         train_rows = train_rows[:args.limit]
     if not train_rows:

@@ -19,14 +19,14 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from fugojev.evaluate import format_report, records_for_split, report_from_buckets
-from fugojev.questions import FIGO_LEVELS, GRADE_CRITERIA, MUSCLE_CRITERIA
+from fugojev.evaluate import ABLATIONS, format_report, records_for_split, report_from_buckets, select_records
+from fugojev.questions import GRADE_CRITERIA, MUSCLE_CRITERIA
 from fugojev.records import load_records
-from fugojev.split import canonical_split
+from fugojev.split import FOLDS, fold_records
 
 # A template field is `名称:` or `名称：` at the start of a line or after whitespace.
-_FIELD = re.compile(r"(?:(?<=\s)|^)([\u4e00-\u9fff（）()\w]{2,14})[:：]")
-_NEGATED = re.compile(r"未见|未累及|未侵|未达|无|阴性|不伴|排除|不考虑|（-）|\(-\)|：-")
+_FIELD = re.compile(r"(?:(?<=[\s:：])|^)([\u4e00-\u9fff（）()\w]{2,14})[:：]")
+_NEGATED = re.compile(r"未见|未累及|未受|未侵|未达|未发现|未找到|未及|无|阴性|不伴|排除|不考虑|（-）|\(-\)|：-")
 _POSITIVE_MARK = re.compile(r"（\+）|\(\+\)|^\s*\+|阳性|(?<!未)见癌|(?<!未见)癌累及|(?<!未见)癌转移|(?<!未)见肿瘤|(?<!未)受累")
 
 
@@ -287,11 +287,11 @@ def train_majority(records) -> dict:
     return {qid: counter.most_common(1)[0][0] for qid, counter in counts.items()}
 
 
-def score_rules(records, defaults) -> tuple[dict, dict]:
+def score_rules(records, defaults, rows=None) -> tuple[dict, dict]:
     buckets = defaultdict(lambda: {"golds": [], "preds": []})
     fired = Counter()
     asked = Counter()
-    for record in records:
+    for index, record in enumerate(records):
         answers = predict_rules(record["state"])
         for qid, question in record["questions"].items():
             asked[qid] += 1
@@ -302,6 +302,9 @@ def score_rules(records, defaults) -> tuple[dict, dict]:
                 answer = defaults[qid]
             buckets[qid]["golds"].append(gold_name(question))
             buckets[qid]["preds"].append(answer)
+            if rows is not None:
+                rows.append({"index": index, "qid": qid, "gold": gold_name(question), "pred": answer,
+                             "fired": answers.get(qid) is not None})
     coverage = {qid: fired[qid] / asked[qid] for qid in sorted(asked)}
     return buckets, coverage
 
@@ -310,20 +313,30 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Rule baseline over the state text")
     parser.add_argument("--records", default="data/ec/records.jsonl")
     parser.add_argument("--split", default="dev")
+    parser.add_argument("--fold", type=int, default=None, help="score the held-out records of this CV fold")
+    parser.add_argument("--folds", type=int, default=FOLDS)
     parser.add_argument("--allow-test", action="store_true")
+    parser.add_argument("--ablation", choices=ABLATIONS, default="none")
+    parser.add_argument("--rows", default="", help="write per-question gold/pred rows here")
     parser.add_argument("--out", default="")
     args = parser.parse_args(argv)
-    split = canonical_split(args.split)
-    if split == "test" and not args.allow_test:
-        raise SystemExit("test split is locked; pass --allow-test")
+    scored, split = select_records(args)
     records = load_records(args.records)
-    defaults = train_majority(records_for_split(records, "train"))
-    scored = records_for_split(records, split)
-    if not scored:
-        raise SystemExit(f"no records in split {split}")
-    buckets, coverage = score_rules(scored, defaults)
+    if args.fold is None:
+        fitting = records_for_split(records, "train")
+    else:
+        fitting = fold_records(records, args.fold, args.folds, held_out=False)
+    defaults = train_majority(fitting)
+    rows = [] if args.rows else None
+    buckets, coverage = score_rules(scored, defaults, rows)
+    if rows is not None:
+        out = Path(args.rows)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps({"split": split, "ablation": args.ablation, "rows": rows}, ensure_ascii=False) + "\n",
+                       encoding="utf-8")
     report = report_from_buckets(buckets, len(scored), system="rule baseline")
     report["split"] = split
+    report["ablation"] = args.ablation
     report["defaults"] = defaults
     report["rule_coverage"] = coverage
     print(format_report(report))
