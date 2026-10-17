@@ -1,4 +1,19 @@
-"""Endometrial-cancer questions. Labels come from the 333-case sheet, not from the note text."""
+"""Endometrial-cancer questions. Labels come from the 333-case sheet, not from the note text.
+
+v1 asked FIGO 2009 and four components. v1.3 adds the components that FIGO 2023
+needs (histotype, cervical stroma, extrauterine extent, p53 and MMR
+immunohistochemistry, POLE) and the 2023 stage itself; `figo2023.compose` turns the
+component answers into a stage, and the direct 2023 head is kept for comparison.
+"""
+
+from .figo2023 import (
+    EXTENT_CRITERIA,
+    HISTOTYPE_CRITERIA,
+    STAGE_2023_CRITERIA,
+    normalize_histotype,
+    normalize_mmr,
+    normalize_p53,
+)
 
 SRC = "ec-gold"
 
@@ -59,7 +74,45 @@ QUESTIONS = {
         "instructions": "手术标本的组织学分级是哪一档？",
         "criteria": GRADE_CRITERIA,
     },
+    # v1.3: FIGO 2023 components and the 2023 stage.
+    "histotype": {
+        "type": "choice",
+        "instructions": "手术标本的病理类型是哪一种？",
+        "criteria": HISTOTYPE_CRITERIA,
+    },
+    "cervical_stroma": {
+        "type": "noul",
+        "instructions": "病理是否写明肿瘤侵犯宫颈间质？",
+        "criteria": {"true": "宫颈间质受累", "false": "宫颈间质未受累"},
+    },
+    "extent": {
+        "type": "choice",
+        "instructions": "除淋巴结外，肿瘤超出子宫的最远部位是哪里？只依据病理和手术记录写明的受累部位。",
+        "criteria": EXTENT_CRITERIA,
+    },
+    "p53": {
+        "type": "noul",
+        "instructions": "免疫组化中 p53 的表达是异常型（弥漫强阳性或完全缺失）还是野生型？",
+        "criteria": {"true": "p53 异常表达", "false": "p53 野生型表达"},
+    },
+    "mmr": {
+        "type": "noul",
+        "instructions": "免疫组化中错配修复蛋白（MLH1、PMS2、MSH2、MSH6）是否有缺失？",
+        "criteria": {"true": "有错配修复蛋白缺失（dMMR）", "false": "四个蛋白都表达（pMMR）"},
+    },
+    "pole": {
+        "type": "noul",
+        "instructions": "分子病理是否检出 POLE 致病性突变（核酸外切酶结构域热点，如 P286R、V411L、S459F）？",
+        "criteria": {"true": "POLE 致病性突变", "false": "未检出 POLE 致病性突变"},
+    },
+    "figo2023": {
+        "type": "choice",
+        "instructions": "这位子宫内膜癌患者的 FIGO 2023 分期是哪一档？分子分型只在文书写明时使用。",
+        "criteria": STAGE_2023_CRITERIA,
+    },
 }
+
+COMPONENT_QIDS = ("histotype", "grade", "muscle_invasion", "lvsi", "cervical_stroma", "extent", "lymph_node", "p53", "mmr", "pole")
 
 
 def _blank(value) -> str:
@@ -136,6 +189,29 @@ def _question(qid: str, label):
     }
 
 
+def placeholder_label(qid):
+    """A syntactically valid label for asking a question whose gold cell is missing."""
+    spec = QUESTIONS[qid]
+    if spec["type"] == "noul":
+        return False
+    if spec["type"] == "score":
+        return 0
+    return next(iter(spec["criteria"]))
+
+
+def with_all_components(record: dict) -> tuple[dict, set]:
+    """Ask every FIGO 2023 component even when its gold is missing, so the composed
+    stage can be formed; returns the widened record and the qids whose label is a
+    placeholder and must not be scored."""
+    questions = dict(record["questions"])
+    placeholders = set()
+    for qid in COMPONENT_QIDS:
+        if qid not in questions:
+            questions[qid] = _question(qid, placeholder_label(qid))
+            placeholders.add(qid)
+    return {**record, "questions": questions}, placeholders
+
+
 def consistent_predictions(predicted: dict) -> dict:
     """FIGO 2009: invasion of half the myometrium or more is not IA.
 
@@ -148,13 +224,25 @@ def consistent_predictions(predicted: dict) -> dict:
     return adjusted
 
 
-def questions_from_raw(*, figo, grade, muscle, lvsi, nodes) -> dict:
-    """Drop any question whose sheet cell cannot be normalized. Do not invent a label."""
+def questions_from_raw(*, figo, grade, muscle, lvsi, nodes, histotype=None, p53=None, mmr=None,
+                       pole=None, cervical_stroma=None, extent=None, figo2023=None) -> dict:
+    """Drop any question whose sheet cell cannot be normalized. Do not invent a label.
+
+    `pole`, `cervical_stroma`, `extent` and `figo2023` arrive already normalized
+    (`corpus` derives them with `figo2023.gold_components`); None drops the question.
+    """
     found = {
         "figo": normalize_figo(figo),
         "muscle_invasion": normalize_muscle(muscle),
         "lvsi": normalize_lvsi(lvsi),
         "lymph_node": normalize_nodes(nodes),
         "grade": normalize_grade(grade),
+        "histotype": normalize_histotype(histotype),
+        "p53": normalize_p53(p53),
+        "mmr": normalize_mmr(mmr),
+        "pole": pole,
+        "cervical_stroma": cervical_stroma,
+        "extent": extent,
+        "figo2023": figo2023,
     }
     return {qid: _question(qid, label) for qid, label in found.items() if label is not None}

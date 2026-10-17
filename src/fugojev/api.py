@@ -6,20 +6,26 @@ note sections, which are rendered with the same `render_state` the training data
 went through, so the model is served byte-identical text to what it was trained on.
 
     {
-      "sections": {"门诊": ["..."], "入院": "...", "影像": ["..."], "病理": ["..."], "手术": ["..."]},
-      "questions": ["figo", "muscle_invasion"]          # optional subset
+      "sections": {"门诊": ["..."], "入院": "...", "影像": ["..."], "病理": ["..."], "手术": ["..."],
+                   "免疫组化": ["..."], "分子病理": ["..."]},
+      "questions": ["figo", "muscle_invasion"],         # optional subset
+      "molecular": "POLEmut"                            # optional: POLEmut / MMRd / p53abn / NSMP
     }
 
 Answers carry the chosen option, the probability over options, and a confidence
 in [0, 1] that is a function of the distribution, not a measured accuracy rate.
+When the request asks the FIGO 2023 components, the answers also carry
+`figo2023_composed`: the 2023 stage composed from the component answers, using the
+structured `molecular` class if supplied, otherwise the p53 / MMR / POLE heads.
 """
 
 from dataclasses import dataclass, field
 
-from fugojev.questions import QUESTIONS, consistent_predictions
+from fugojev.figo2023 import MOLECULAR_CLASSES, stage_from_predictions
+from fugojev.questions import COMPONENT_QIDS, QUESTIONS, consistent_predictions
 from fugojev.state import render_state
 
-SECTION_ORDER = ("门诊", "入院", "影像", "病理", "手术")
+SECTION_ORDER = ("门诊", "入院", "影像", "病理", "免疫组化", "分子病理", "手术")
 _PLACEHOLDER = {"noul": False, "choice": None, "score": 0}
 
 
@@ -28,6 +34,7 @@ class Request:
     state: str = ""
     sections: dict = field(default_factory=dict)
     questions: list | None = None
+    molecular: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict) -> "Request":
@@ -37,6 +44,7 @@ class Request:
             state=str(payload.get("state") or ""),
             sections=dict(payload.get("sections") or {}),
             questions=list(payload["questions"]) if payload.get("questions") else None,
+            molecular=payload.get("molecular") or None,
         )
         request.validate()
         return request
@@ -53,6 +61,8 @@ class Request:
                 raise ValueError(f"unknown questions {missing}; expected {list(QUESTIONS)}")
             if not self.questions:
                 raise ValueError("questions must not be an empty list")
+        if self.molecular is not None and self.molecular not in MOLECULAR_CLASSES:
+            raise ValueError(f"unknown molecular class {self.molecular!r}; expected one of {list(MOLECULAR_CLASSES)}")
 
     def rendered_state(self) -> str:
         """Sections in clinical reading order, tail-kept per section, pathology first in budget."""
@@ -106,8 +116,9 @@ def score_confidence(probs) -> float:
     return 1.0 - sum(p * abs(index - mode) for index, p in enumerate(probs)) / (levels - 1)
 
 
-def to_answers(probabilities, qids, keys_per_question, apply_rule=True) -> dict:
-    """Probability vectors -> answer objects keyed by question id."""
+def to_answers(probabilities, qids, keys_per_question, apply_rule=True, molecular=None) -> dict:
+    """Probability vectors -> answer objects keyed by question id. Adds the composed
+    FIGO 2023 stage when every component question was asked."""
     answers = {}
     for probs, qid, keys in zip(probabilities, qids, keys_per_question):
         values = [float(p) for p in probs]
@@ -128,4 +139,11 @@ def to_answers(probabilities, qids, keys_per_question, apply_rule=True) -> dict:
             if adjusted[qid] != item["answer"]:
                 item["rule_adjusted_from"] = item["answer"]
                 item["answer"] = adjusted[qid]
+    if all(qid in answers for qid in COMPONENT_QIDS):
+        chosen = {qid: item["answer"] for qid, item in answers.items()}
+        answers["figo2023_composed"] = {
+            "type": "derived",
+            "answer": stage_from_predictions(chosen, molecular),
+            "molecular_source": "request" if molecular else "notes",
+        }
     return answers

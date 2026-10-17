@@ -24,11 +24,13 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from fugojev.evaluate import ABLATIONS, classification_stats, format_report
+from fugojev.evaluate import ABLATIONS, COMPOSED_QIDS, classification_stats, format_report
 from fugojev.questions import QUESTIONS
 from fugojev.split import FOLDS
 
 SYSTEMS = ("fugojev", "rule")
+# Direct heads first, then the derived 2023 stages (reported, not counted in micro).
+REPORTED_QIDS = tuple(QUESTIONS) + tuple(COMPOSED_QIDS)
 BOOTSTRAP = 2000
 
 
@@ -137,9 +139,9 @@ def pooled_report(out, ablation, folds, seed=0):
     rng = random.Random(seed)
     samples = [[rng.choice(patients) for _ in patients] for _ in range(BOOTSTRAP)]
     report = {"ablation": ablation, "n_patients": len(patients), "questions": {}}
-    for qid in QUESTIONS:
+    for qid in REPORTED_QIDS:
         point = {system: _stats_for(rows, qid, patients) for system, rows in (("fugojev", model_rows), ("rule", rule_rows))}
-        if point["fugojev"]["n"] == 0:
+        if point["fugojev"]["n"] == 0 or point["rule"]["n"] == 0:
             continue
         boot = {system: {"accuracy": [], "macro_f1": []} for system in SYSTEMS}
         diff = []
@@ -165,7 +167,9 @@ def pooled_report(out, ablation, folds, seed=0):
     for system, rows in (("fugojev", model_rows), ("rule", rule_rows)):
         correct = total = 0
         for questions in rows.values():
-            for row in questions.values():
+            for qid, row in questions.items():
+                if qid in COMPOSED_QIDS:
+                    continue
                 total += 1
                 correct += row["pred"] == row["gold"]
         report[f"micro_{system}"] = correct / total if total else None

@@ -220,7 +220,7 @@ def main(argv=None):
                 report = score_requests(model, tokenizer, dev_rows, max_state=model.max_state)
             accuracy = report["micro"]["accuracy"]
             message += f" dev_acc {accuracy:.3f}" if accuracy is not None else " dev_acc n/a"
-            for qid in ("figo", "muscle_invasion"):
+            for qid in ("figo", "figo2023", "figo2023_composed", "muscle_invasion"):
                 stats = report["questions"].get(qid)
                 if stats and stats["accuracy"] is not None:
                     message += f" {qid} {stats['accuracy']:.3f} f1 {stats['macro_f1']:.3f}"

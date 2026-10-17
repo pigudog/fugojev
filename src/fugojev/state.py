@@ -6,23 +6,34 @@ so a long operative note cannot push the pathology conclusion out. Gold columns
 and outpatient TNM never have a field to be read from.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import date
 
 SECTION_CHARS = 800
-MAX_STATE_CHARS = 3200
+MAX_STATE_CHARS = 4600
+# Per-section character caps where they differ from SECTION_CHARS. Immunohistochemistry
+# reports are one short line; the molecular-pathology report is long and keeps its
+# conclusions (POLE, TP53, MMR, microsatellite) at the end, which `clip_tail` preserves.
+SECTION_CAPS = {"免疫组化": 320, "分子病理": 1100}
 # When the budget runs out, earlier titles in this list keep their conclusion.
-SECTION_PRIORITY = ("病理", "影像", "手术", "入院", "门诊")
+SECTION_PRIORITY = ("病理", "免疫组化", "分子病理", "影像", "手术", "入院", "门诊")
 
 # Days before the anchor, days after. Staging pathology is the surgical specimen,
 # so it is allowed to arrive after the operation. Clinic notes stop at the anchor.
+# Immunohistochemistry follows the specimen by about two weeks, molecular pathology
+# by one to two months.
 WINDOWS = {
     "pathology": (30, 120),
+    "ihc": (30, 150),
+    "molecular": (30, 180),
     "imaging": (180, 30),
     "clinic": (365, 0),
     "surgery": (7, 3),
 }
-LIMITS = {"pathology": 3, "imaging": 3, "clinic": 2, "surgery": 2}
+LIMITS = {"pathology": 3, "ihc": 2, "molecular": 1, "imaging": 3, "clinic": 2, "surgery": 2}
+IHC_MARKS = ("P53", "p53", "MLH1", "MSH6")
+MOLECULAR_MARKS = ("POLE", "TP53", "微卫星", "MSI")
 IMAGING_HINTS = ("盆", "子宫", "内膜", "MRI", "磁共振", "CT", "超声", "核磁")
 PATHOLOGY_HINTS = ("子宫", "内膜", "手术", "全切")
 
@@ -57,6 +68,43 @@ def clip_tail(text: str, limit: int) -> str:
     return "…" + text[-(limit - 1):]
 
 
+_MOLECULAR_STOP = re.compile(r"检测方法及局限性|质量控制|其他说明|检测局限性|参考文献|免责声明")
+_MOLECULAR_KEEP = re.compile(
+    r"POLE|TP53|P53|MLH1|MSH2|MSH6|PMS2|错配修复|MMR|微卫星|MSI|MSS|分子分型|分子亚型|综合上述|检测结果|结果解释"
+    r"|致病性.{0,6}变异如下|意义未明变异如下|疾病描述|检测项目|原病理号"
+)
+
+
+_MOLECULAR_LINE = 240
+_MOLECULAR_FINDING = re.compile(r"受检者|综合上述|状态为|检测到|检出|未检|本例|符合|提示|建议")
+
+
+def condense_molecular(text: str) -> str:
+    """Keep the lines of a molecular-pathology report that bear on the molecular class.
+
+    These NGS reports put the findings first (microsatellite status, pathogenic
+    variants, variants of uncertain significance, a per-gene interpretation) and
+    then pages of method, quality control and the gene panel. The tail is useless
+    and the per-gene interpretation of unrelated genes is long, so keep the section
+    headers and every line that names POLE, TP53, the MMR proteins or microsatellite
+    status, and stop at the method section.
+    """
+    kept = []
+    for line in _tidy(text).splitlines():
+        if _MOLECULAR_STOP.search(line):
+            break
+        if not _MOLECULAR_KEEP.search(line):
+            continue
+        if len(line) > _MOLECULAR_LINE:
+            # Long interpretation paragraphs: keep the sentences that state this
+            # patient's finding, drop the textbook sentences around them.
+            sentences = [s for s in re.split(r"(?<=[。；;])", line) if s.strip()]
+            finding = [s for s in sentences if _MOLECULAR_FINDING.search(s) and _MOLECULAR_KEEP.search(s)]
+            line = "".join(finding or sentences[:1])[:_MOLECULAR_LINE]
+        kept.append(line)
+    return "\n".join(kept) if kept else _tidy(text)
+
+
 def render_state(sections, *, section_chars=SECTION_CHARS, max_chars=MAX_STATE_CHARS) -> str:
     """Keep each section's conclusion, and spend a tight budget on pathology first.
 
@@ -65,7 +113,7 @@ def render_state(sections, *, section_chars=SECTION_CHARS, max_chars=MAX_STATE_C
     """
     blocks = []
     for title, body in sections:
-        body = _tidy(body)
+        body = condense_molecular(body) if title == "分子病理" else _tidy(body)
         if body:
             blocks.append((title, body))
     rank = {title: index for index, title in enumerate(SECTION_PRIORITY)}
@@ -76,7 +124,7 @@ def render_state(sections, *, section_chars=SECTION_CHARS, max_chars=MAX_STATE_C
         if remaining < 24:
             break
         title, body = blocks[index]
-        room = min(section_chars, remaining - len(title) - 4)
+        room = min(SECTION_CAPS.get(title, section_chars), remaining - len(title) - 4)
         if room < 12:
             break
         block = f"[{title}]\n{clip_tail(body, room)}"
@@ -129,6 +177,19 @@ def is_pathology(category, subtype) -> bool:
     return "病理" in f"{clean_text(category)}{clean_text(subtype)}"
 
 
+def pathology_kind(category, subtype) -> str | None:
+    """'ihc' for immunohistochemistry, 'molecular' for the molecular-pathology report,
+    'pathology' for every other pathology report, None for non-pathology."""
+    if not is_pathology(category, subtype):
+        return None
+    hint = clean_text(subtype)
+    if "免疫" in hint:
+        return "ihc"
+    if "分子" in hint:
+        return "molecular"
+    return "pathology"
+
+
 def is_imaging(category, subtype) -> bool:
     if is_pathology(category, subtype):
         return False
@@ -166,7 +227,8 @@ def pick_docs(docs, anchor, before_days, after_days, limit, prefer=(), text_mark
     return chosen
 
 
-def assemble_sections(*, admission_text, clinics, imaging, pathology, surgeries, anchor):
+def assemble_sections(*, admission_text, clinics, imaging, pathology, surgeries, anchor,
+                      ihc=(), molecular=()):
     """Ordered so a tail trim keeps pathology and the operative note."""
     sections = []
     for doc in pick_docs(clinics, anchor, *WINDOWS["clinic"], LIMITS["clinic"]):
@@ -180,6 +242,11 @@ def assemble_sections(*, admission_text, clinics, imaging, pathology, surgeries,
         text_marks=("肌层",),
     ):
         sections.append(("病理", doc.text))
+    for doc in pick_docs(ihc, anchor, *WINDOWS["ihc"], LIMITS["ihc"], text_marks=IHC_MARKS):
+        sections.append(("免疫组化", doc.text))
+    for doc in pick_docs(molecular, anchor, *WINDOWS["molecular"], LIMITS["molecular"],
+                         text_marks=MOLECULAR_MARKS):
+        sections.append(("分子病理", doc.text))
     for doc in pick_docs(surgeries, anchor, *WINDOWS["surgery"], LIMITS["surgery"]):
         sections.append(("手术", doc.text))
     return sections

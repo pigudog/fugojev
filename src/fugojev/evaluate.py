@@ -10,9 +10,12 @@ import torch
 
 from fugojev.checkpoint import load_checkpoint
 from fugojev.model import MAX_STATE
-from fugojev.questions import consistent_predictions
+from fugojev.figo2023 import STAGES_2023, molecular_from_stage, stage_from_predictions
+from fugojev.questions import consistent_predictions, with_all_components
 from fugojev.records import load_records, materialize
 from fugojev.split import FOLDS, canonical_split, fold_records, split_of
+
+COMPOSED_QIDS = ("figo2023_composed", "figo2023_composed_given")
 
 # Ablation names only; `fugojev.ablate` imports from `baseline`, which imports this module.
 ABLATIONS = ("none", "paraphrase", "strip-template", "pathology-only")
@@ -45,13 +48,30 @@ def report_from_buckets(buckets, n_records, runtime=None, system="fugojev") -> d
     `compare.py` reads this shape back, so rule baseline, zero-shot probe and the
     fine-tuned model all land in the same table."""
     per_question = {qid: classification_stats(pair["golds"], pair["preds"]) for qid, pair in sorted(buckets.items())}
-    correct = sum(gold == pred for pair in buckets.values() for gold, pred in zip(pair["golds"], pair["preds"]))
-    total = sum(len(pair["golds"]) for pair in buckets.values())
+    # Derived answers (the composed 2023 stage) are reported per question but do not
+    # enter micro accuracy, which counts each head once.
+    heads = {qid: pair for qid, pair in buckets.items() if qid not in COMPOSED_QIDS}
+    correct = sum(gold == pred for pair in heads.values() for gold, pred in zip(pair["golds"], pair["preds"]))
+    total = sum(len(pair["golds"]) for pair in heads.values())
     micro = {"n": total, "accuracy": (correct / total) if total else None}
     report = {"system": system, "n_records": n_records, "micro": micro, "questions": per_question}
     if runtime is not None:
         report["runtime"] = runtime
     return report
+
+
+def add_composed_stages(golds: dict, predicted: dict, record_rows: dict, index: int) -> None:
+    """Two derived FIGO 2023 answers next to the direct head: the stage composed from
+    the component heads with the molecular class read from the notes, and the same
+    with the molecular class supplied as structured input (as a clinic with an
+    outside sequencing report would). Both are scored against the gold 2023 stage."""
+    gold = golds["figo2023"]
+    notes_only = stage_from_predictions(predicted) or "none"
+    given = stage_from_predictions(predicted, molecular_from_stage(gold) or "NSMP") or "none"
+    for qid, value in zip(COMPOSED_QIDS, (notes_only, given)):
+        golds[qid] = gold
+        predicted[qid] = value
+        record_rows[qid] = {"index": index, "qid": qid, "keys": list(STAGES_2023), "gold": gold, "probs": None}
 
 
 def score_requests(model, tokenizer, requests, max_state=MAX_STATE, calibration=None, rows=None) -> dict:
@@ -75,6 +95,9 @@ def score_requests(model, tokenizer, requests, max_state=MAX_STATE, calibration=
     try:
         with torch.no_grad():
             for index, request in enumerate(requests):
+                placeholders = set()
+                if "figo2023" in request["questions"]:
+                    request, placeholders = with_all_components(request)
                 encoded = model.encode(tokenizer, materialize(request), max_state=max_state)
                 if on_cuda:
                     torch.cuda.synchronize()
@@ -97,7 +120,11 @@ def score_requests(model, tokenizer, requests, max_state=MAX_STATE, calibration=
                     golds[qid] = keys[label]
                     predicted[qid] = keys[max(range(len(values)), key=values.__getitem__)]
                 predicted = consistent_predictions(predicted)
+                if "figo2023" in golds:
+                    add_composed_stages(golds, predicted, record_rows, index)
                 for qid, gold in golds.items():
+                    if qid in placeholders:
+                        continue
                     buckets[qid]["golds"].append(gold)
                     buckets[qid]["preds"].append(predicted[qid])
                     if rows is not None:

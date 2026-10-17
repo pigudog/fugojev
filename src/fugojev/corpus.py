@@ -4,6 +4,7 @@ National-id numbers and names are used only to link rows in memory. They are not
 written to the JSONL. Outpatient TNM columns and the discharge summary are not read.
 """
 
+import json
 import os
 import sys
 from collections import Counter, defaultdict
@@ -22,15 +23,18 @@ from fugojev.questions import (
     normalize_nodes,
     questions_from_raw,
 )
+from fugojev.figo2023 import gold_components, gold_stage, normalize_histotype, normalize_molecular
 from fugojev.split import split_of
 from fugojev.state import (
+    WINDOWS,
     Doc,
     admission_body,
     assemble_sections,
     clean_text,
     clinic_body,
+    in_window,
     is_imaging,
-    is_pathology,
+    pathology_kind,
     render_state,
     report_body,
     surgery_body,
@@ -39,6 +43,10 @@ from fugojev.state import (
 # Data root and gold-sheet name. Set FUGOJEV_DATA / FUGOJEV_GOLD, or pass `--root`.
 UTERUS = Path(os.environ.get("FUGOJEV_DATA") or "data/raw/uterus")
 GOLD_NAME = os.environ.get("FUGOJEV_GOLD") or "gold.xlsx"
+# Per-case FIGO 2023 decisions that the sheet cannot make (2009 IVB split into
+# IIIB2 / IVB / IVC, reviewed by eye). JSON {hospital_id: {"extent": ..., "note": ...}}.
+# Lives under data/, which is git-ignored.
+OVERRIDES_2023 = Path(os.environ.get("FUGOJEV_OVERRIDES") or "data/ec/gold2023-overrides.json")
 
 _BLANK = {"", "na", "n/a", "null", "none", "-", "nan"}
 
@@ -217,6 +225,7 @@ def load_cases(root=None):
         ["身份证号", "项目大类", "项目小类", "所见", "报告内容", "报告日期"],
     )
     pathology_docs, pathology_counts = defaultdict(list), Counter()
+    ihc_docs, molecular_docs = defaultdict(list), defaultdict(list)
     imaging_docs, imaging_counts = defaultdict(list), Counter()
     categories = Counter()
     for row in reports.to_dict("records"):
@@ -227,10 +236,12 @@ def load_cases(root=None):
         categories[clean_text(category) or "(空)"] += 1
         body = report_body(row)
         when = parse_date(row.get("报告日期"))
-        if is_pathology(category, subtype):
+        kind = pathology_kind(category, subtype)
+        if kind is not None:
             pathology_counts[card] += 1
             if body and when is not None:
-                pathology_docs[card].append(Doc(when, body, clean_text(subtype)))
+                bucket = {"pathology": pathology_docs, "ihc": ihc_docs, "molecular": molecular_docs}[kind]
+                bucket[card].append(Doc(when, body, clean_text(subtype)))
         elif is_imaging(category, subtype):
             imaging_counts[card] += 1
             if body and when is not None:
@@ -240,10 +251,17 @@ def load_cases(root=None):
     clinic = read_excel(root / "门急诊病史.xlsx", ["身份证号", "主诉", "病史描述", "就诊日期"])
     clinic_docs, clinic_counts = _docs_by_card(clinic, "就诊日期", clinic_body, cards)
 
+    overrides = {}
+    if OVERRIDES_2023.exists():
+        with open(OVERRIDES_2023, encoding="utf-8") as handle:
+            overrides = {norm_id(key): value for key, value in json.load(handle).items()}
+        _log(f"read {len(overrides)} FIGO 2023 overrides from {OVERRIDES_2023}")
+
     cases = []
     summary = Counter()
     summary["gold_rows"] = len(gold)
     summary["skipped_no_hospital_id"] = skipped
+    summary["figo2023"] = Counter()
     summary["figo"] = Counter()
     summary["grade"] = Counter()
     summary["muscle"] = Counter()
@@ -278,6 +296,8 @@ def load_cases(root=None):
             pathology=pathology_docs.get(card, []),
             surgeries=surgery_docs.get(card, []),
             anchor=anchor,
+            ihc=ihc_docs.get(card, []),
+            molecular=molecular_docs.get(card, []),
         )
         used = Counter(title for title, _ in sections)
         links = {
@@ -286,15 +306,59 @@ def load_cases(root=None):
             "病理": pathology_counts[card] if card else 0,
             "影像": imaging_counts[card] if card else 0,
             "门诊": clinic_counts[card] if card else 0,
+            "免疫组化": len(ihc_docs.get(card, [])) if card else 0,
+            "分子病理": len(molecular_docs.get(card, [])) if card else 0,
         }
+        state = render_state(sections)
+        # FIGO 2023 components: the sheet first, the pathology template for what the
+        # sheet does not state, the reviewed override for 2009 IVB.
+        pathology_text = "\n".join(
+            doc.text for doc in pathology_docs.get(card, [])
+            if in_window(doc.when, anchor, *WINDOWS["pathology"])
+        )
+        surgery_text = "\n".join(
+            doc.text for doc in surgery_docs.get(card, [])
+            if in_window(doc.when, anchor, *WINDOWS["surgery"])
+        )
+        molecular = normalize_molecular(row.get("分子分型"))
+        components = gold_components(
+            figo2009=normalize_figo(row.get("FIGO分期")),
+            muscle=normalize_muscle(row.get("肌层浸润")),
+            lvsi=normalize_lvsi(row.get("脉管侵犯")),
+            nodes=normalize_nodes(row.get(node_column)),
+            histotype=normalize_histotype(row.get("病理类型")),
+            grade=normalize_grade(row.get("组织学分级")),
+            molecular=molecular,
+            pathology_text=pathology_text,
+            surgery_text=surgery_text,
+            override=overrides.get(hospital_id),
+        )
+        stage_2023 = gold_stage(components)
+        if normalize_figo(row.get("FIGO分期")) == "IVB" and hospital_id not in overrides:
+            summary["ivb_without_override"] += 1
+        # POLE can only be read when a molecular report made it into the state; a
+        # report that lists no POLE variant is the "not detected" answer.
+        pole_label = None
+        if molecular is not None and "[分子病理]" in state:
+            pole_label = components["pole"]
         questions = questions_from_raw(
             figo=row.get("FIGO分期"),
             grade=row.get("组织学分级"),
             muscle=row.get("肌层浸润"),
             lvsi=row.get("脉管侵犯"),
             nodes=row.get(node_column),
+            histotype=row.get("病理类型"),
+            p53=row.get("P53免疫组化"),
+            mmr=row.get("MLH1/PMS2/MSH2/MSH6免疫组化"),
+            pole=pole_label,
+            cervical_stroma=components["cervical_stroma"],
+            extent=components["extent"],
+            figo2023=stage_2023,
         )
-        state = render_state(sections)
+        if stage_2023 is not None:
+            summary["figo2023"][stage_2023] += 1
+        else:
+            summary["figo2023_missing"] += 1
         case = Case(
             hospital_id=hospital_id,
             split=split_of(hospital_id),
@@ -305,8 +369,8 @@ def load_cases(root=None):
         )
         cases.append(case)
         summary[f"split_{case.split}"] += 1
-        for kind in ("入院", "手术", "病理", "影像", "门诊"):
-            if links[kind]:
+        for kind in ("入院", "手术", "病理", "影像", "门诊", "免疫组化", "分子病理"):
+            if links.get(kind):
                 summary[f"linked_{kind}"] += 1
             if used.get(kind):
                 summary[f"used_{kind}"] += 1
@@ -355,8 +419,12 @@ def format_report(summary) -> str:
         f"  无法规范化 {summary['nodes_unrecognized']}",
         "能连上文书的病例",
     ]
-    for kind in ("入院", "手术", "病理", "影像", "门诊"):
+    for kind in ("入院", "手术", "病理", "影像", "门诊", "免疫组化", "分子病理"):
         lines.append(f"  {kind} 有记录 {summary[f'linked_{kind}']}  写入state {summary[f'used_{kind}']}")
+    lines.append("FIGO 2023（由表格列+病理模板+复核推出）")
+    lines.extend(f"  {stage} {count}" for stage, count in sorted(summary["figo2023"].items(), key=lambda kv: -kv[1]))
+    lines.append(f"  无法推出 {summary['figo2023_missing']}")
+    lines.append(f"  2009 IVB 无复核记录 {summary['ivb_without_override']}")
     lines.extend([
         "已关联病例的检查项目大类",
         *[f"  {name} {count}" for name, count in summary["report_categories"].most_common(12)],

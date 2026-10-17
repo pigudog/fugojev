@@ -1,0 +1,102 @@
+{
+  "system": "fugojev",
+  "n_records": 36,
+  "micro": {
+    "n": 377,
+    "accuracy": 0.9442970822281167
+  },
+  "questions": {
+    "cervical_stroma": {
+      "n": 36,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.8611111111111112
+    },
+    "extent": {
+      "n": 36,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.9722222222222222
+    },
+    "figo": {
+      "n": 36,
+      "accuracy": 0.9166666666666666,
+      "macro_f1": 0.8733333333333333,
+      "majority_accuracy": 0.6111111111111112
+    },
+    "figo2023": {
+      "n": 30,
+      "accuracy": 0.6333333333333333,
+      "macro_f1": 0.528051948051948,
+      "majority_accuracy": 0.23333333333333334
+    },
+    "figo2023_composed": {
+      "n": 30,
+      "accuracy": 0.7666666666666667,
+      "macro_f1": 0.7772549019607843,
+      "majority_accuracy": 0.23333333333333334
+    },
+    "figo2023_composed_given": {
+      "n": 30,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.23333333333333334
+    },
+    "grade": {
+      "n": 32,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.5
+    },
+    "histotype": {
+      "n": 36,
+      "accuracy": 0.9444444444444444,
+      "macro_f1": 0.6616915422885572,
+      "majority_accuracy": 0.9444444444444444
+    },
+    "lvsi": {
+      "n": 31,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.8387096774193549
+    },
+    "lymph_node": {
+      "n": 36,
+      "accuracy": 0.9722222222222222,
+      "macro_f1": 0.9208791208791209,
+      "majority_accuracy": 0.8888888888888888
+    },
+    "mmr": {
+      "n": 29,
+      "accuracy": 0.9655172413793104,
+      "macro_f1": 0.9583931133428981,
+      "majority_accuracy": 0.6896551724137931
+    },
+    "muscle_invasion": {
+      "n": 34,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.6176470588235294
+    },
+    "p53": {
+      "n": 28,
+      "accuracy": 0.8928571428571429,
+      "macro_f1": 0.801418439716312,
+      "majority_accuracy": 0.8214285714285714
+    },
+    "pole": {
+      "n": 13,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 1.0
+    }
+  },
+  "runtime": {
+    "latency_ms_per_record_median": 867.2474010381848,
+    "latency_ms_per_record_mean": 875.0279448835904,
+    "peak_memory_gb": 2.654967784881592
+  },
+  "split": "dev",
+  "ablation": "none",
+  "run": "weights/ec-v1.3"
+}

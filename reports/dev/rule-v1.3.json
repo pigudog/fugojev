@@ -1,0 +1,126 @@
+{
+  "system": "rule baseline",
+  "n_records": 36,
+  "micro": {
+    "n": 377,
+    "accuracy": 0.9442970822281167
+  },
+  "questions": {
+    "cervical_stroma": {
+      "n": 36,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.8611111111111112
+    },
+    "extent": {
+      "n": 36,
+      "accuracy": 0.9444444444444444,
+      "macro_f1": 0.9852941176470589,
+      "majority_accuracy": 0.9722222222222222
+    },
+    "figo": {
+      "n": 36,
+      "accuracy": 0.9166666666666666,
+      "macro_f1": 0.9053658536585365,
+      "majority_accuracy": 0.6111111111111112
+    },
+    "figo2023": {
+      "n": 30,
+      "accuracy": 0.6666666666666666,
+      "macro_f1": 0.6958333333333333,
+      "majority_accuracy": 0.23333333333333334
+    },
+    "figo2023_composed": {
+      "n": 30,
+      "accuracy": 0.6666666666666666,
+      "macro_f1": 0.6958333333333333,
+      "majority_accuracy": 0.23333333333333334
+    },
+    "figo2023_composed_given": {
+      "n": 30,
+      "accuracy": 0.9333333333333333,
+      "macro_f1": 0.9811965811965813,
+      "majority_accuracy": 0.23333333333333334
+    },
+    "grade": {
+      "n": 32,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.5
+    },
+    "histotype": {
+      "n": 36,
+      "accuracy": 0.9444444444444444,
+      "macro_f1": 0.6616915422885572,
+      "majority_accuracy": 0.9444444444444444
+    },
+    "lvsi": {
+      "n": 31,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.8387096774193549
+    },
+    "lymph_node": {
+      "n": 36,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.8888888888888888
+    },
+    "mmr": {
+      "n": 29,
+      "accuracy": 0.9655172413793104,
+      "macro_f1": 0.9583931133428981,
+      "majority_accuracy": 0.6896551724137931
+    },
+    "muscle_invasion": {
+      "n": 34,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 0.6176470588235294
+    },
+    "p53": {
+      "n": 28,
+      "accuracy": 0.8928571428571429,
+      "macro_f1": 0.801418439716312,
+      "majority_accuracy": 0.8214285714285714
+    },
+    "pole": {
+      "n": 13,
+      "accuracy": 1.0,
+      "macro_f1": 1.0,
+      "majority_accuracy": 1.0
+    }
+  },
+  "split": "dev",
+  "ablation": "none",
+  "defaults": {
+    "figo": "IA",
+    "muscle_invasion": "浸润深度小于1/2肌层",
+    "lvsi": "false",
+    "lymph_node": "none",
+    "grade": "I级",
+    "histotype": "endometrioid",
+    "p53": "false",
+    "mmr": "false",
+    "pole": "false",
+    "cervical_stroma": "false",
+    "extent": "none",
+    "figo2023": "IA2"
+  },
+  "rule_coverage": {
+    "cervical_stroma": 0.9722222222222222,
+    "extent": 0.9722222222222222,
+    "figo": 0.9444444444444444,
+    "figo2023": 1.0,
+    "figo2023_composed": 1.0,
+    "figo2023_composed_given": 1.0,
+    "grade": 0.96875,
+    "histotype": 0.9722222222222222,
+    "lvsi": 0.967741935483871,
+    "lymph_node": 0.9444444444444444,
+    "mmr": 0.9655172413793104,
+    "muscle_invasion": 0.9705882352941176,
+    "p53": 0.8928571428571429,
+    "pole": 1.0
+  }
+}

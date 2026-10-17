@@ -41,7 +41,7 @@ def predict(model, tokenizer, state_or_request, question_ids=None, calibration=N
         if calibration:
             values = apply_calibration(values, keys, calibration.get(qid))
         vectors.append(values)
-    answers = to_answers(vectors, encoded["qids"], encoded["keys"])
+    answers = to_answers(vectors, encoded["qids"], encoded["keys"], molecular=request.molecular)
     answers["_state_truncated"] = bool(encoded["state_truncated"])
     return answers
 
@@ -57,6 +57,8 @@ def main(argv=None):
     parser.add_argument("--dtype", choices=["fp32", "bf16"], default="bf16")
     parser.add_argument("--base", default=None, help="override the backbone path stored in the checkpoint")
     parser.add_argument("--calibration", default="", help="calibration.json from fugojev.calibrate")
+    parser.add_argument("--molecular", default=None, choices=["POLEmut", "MMRd", "p53abn", "NSMP"],
+                        help="structured molecular class, used by the composed FIGO 2023 stage instead of the notes")
     parser.add_argument("--json", action="store_true", help="print one JSON object instead of lines")
     args = parser.parse_args(argv)
     wanted = [qid for qid in args.questions.split(",") if qid] or None
@@ -64,12 +66,14 @@ def main(argv=None):
         text = sys.stdin.read() if args.state == "-" else Path(args.state).read_text(encoding="utf-8")
         if not text.strip():
             raise SystemExit("empty state")
-        request = Request(state=text, questions=wanted)
+        request = Request(state=text, questions=wanted, molecular=args.molecular)
     else:
         text = sys.stdin.read() if args.request == "-" else Path(args.request).read_text(encoding="utf-8")
         payload = json.loads(text)
         if wanted:
             payload["questions"] = wanted
+        if args.molecular:
+            payload["molecular"] = args.molecular
         request = Request.from_dict(payload)
     request.validate()
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -82,6 +86,9 @@ def main(argv=None):
         return answers
     for qid, item in answers.items():
         if qid.startswith("_"):
+            continue
+        if item["type"] == "derived":
+            print(f"{qid}: {item['answer']}  (molecular from {item['molecular_source']})")
             continue
         shown = "  ".join(f"{key} {value:.2f}" for key, value in item["probabilities"].items())
         print(f"{qid}: {item['answer']}  (confidence {item['confidence']:.2f})    [{shown}]")

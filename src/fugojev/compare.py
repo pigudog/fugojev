@@ -1,7 +1,7 @@
 """Put the systems side by side on one split, as a markdown table.
 
     python -m fugojev.compare rule=runs/baseline/dev.json zero-shot=runs/probe/q35-dev.json \\
-        fugojev=reports/dev/fugojev-0.8b.json
+        fugojev=runs/ec-q35/dev-epoch-3.json
 
 Every input is a report in the shape `evaluate`, `baseline` and `base_probe` write
 (`report_from_buckets`), so the table needs no per-system adapters. Cells are
@@ -13,6 +13,7 @@ import argparse
 import json
 from pathlib import Path
 
+from fugojev.evaluate import COMPOSED_QIDS
 from fugojev.questions import QUESTIONS
 
 
@@ -41,7 +42,8 @@ def markdown(reports: dict) -> str:
     header = "| question | " + " | ".join(names) + " | majority |"
     rule = "|---|" + "---|" * (len(names) + 1)
     lines = [header, rule]
-    qids = [qid for qid in QUESTIONS if any(qid in report["questions"] for report in reports.values())]
+    known = tuple(QUESTIONS) + tuple(COMPOSED_QIDS)
+    qids = [qid for qid in known if any(qid in report["questions"] for report in reports.values())]
     for qid in qids:
         cells = [_cell(report["questions"].get(qid)) for report in reports.values()]
         floors = [report["questions"][qid]["majority_accuracy"] for report in reports.values() if qid in report["questions"]]

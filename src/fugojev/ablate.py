@@ -10,8 +10,8 @@
                      centre the conclusion *is* the template, so this removes the
                      evidence itself (see `coverage()`); it is the floor for "no
                      pathology conclusion", not a reading test.
-    pathology-only   keep the [病理] sections alone. Asks what imaging, surgery and
-                     history add.
+    pathology-only   keep the pathology-department sections alone ([病理], [免疫组化],
+                     [分子病理]). Asks what imaging, surgery and history add.
     none             the state as built.
 
 `coverage()` reports how often the evidence words survive an ablation, so a drop in
@@ -33,6 +33,12 @@ _TEMPLATE_FIELD = re.compile(
 )
 
 EVIDENCE_WORDS = {"muscle": "肌层", "lvsi": "脉管", "nodes": "淋巴结", "cervix": "宫颈", "grade": "级"}
+
+# `pathology-only` keeps every pathology-department report: the surgical pathology
+# template, the immunohistochemistry panel and the molecular report. Paraphrase and
+# strip-template only touch the [病理] template; the IHC and molecular sections are
+# not templated the same way and stay as written.
+PATHOLOGY_FAMILY = ("[病理]", "[免疫组化]", "[分子病理]")
 
 
 def strip_template_block(text: str) -> str:
@@ -187,7 +193,7 @@ def apply_ablation(name: str, state: str) -> str:
         return state
     blocks = state.split("\n\n")
     if name == "pathology-only":
-        kept = [block for block in blocks if block.startswith("[病理]")]
+        kept = [block for block in blocks if block.startswith(PATHOLOGY_FAMILY)]
         return "\n\n".join(kept) if kept else state
     if name in {"strip-template", "paraphrase"}:
         seed = hashlib.sha256(state.encode()).hexdigest()[:16]

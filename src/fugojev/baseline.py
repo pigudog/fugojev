@@ -19,8 +19,17 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from fugojev.evaluate import ABLATIONS, format_report, records_for_split, report_from_buckets, select_records
-from fugojev.questions import GRADE_CRITERIA, MUSCLE_CRITERIA
+from fugojev.evaluate import (ABLATIONS, COMPOSED_QIDS, format_report, records_for_split, report_from_buckets,
+                              select_records)
+from fugojev.figo2023 import (
+    cervical_from_text,
+    extent_from_text,
+    molecular_from_stage,
+    normalize_histotype,
+    normalize_p53,
+    stage_from_predictions,
+)
+from fugojev.questions import COMPONENT_QIDS, GRADE_CRITERIA, MUSCLE_CRITERIA
 from fugojev.records import load_records
 from fugojev.split import FOLDS, fold_records
 
@@ -251,22 +260,163 @@ def rule_figo(state: str, muscle: int | None, nodes: str | None) -> str | None:
     return "IB" if muscle == 2 else "IA"
 
 
+# ---- FIGO 2023 components (v1.3) ---------------------------------------------
+
+
+def rule_histotype(pathology: str) -> str | None:
+    """The template's `病理类型:` cell first, then the diagnosis line."""
+    for value in values_of(fields(pathology), r"^病理类型$|^组织学类型$"):
+        found = normalize_histotype(value)
+        if found:
+            return found
+    for line in pathology.splitlines()[::-1]:
+        if re.search(r"癌肉瘤|浆液性癌|透明细胞癌|未分化癌|去分化癌|混合性?癌|内膜样腺?癌", line):
+            return normalize_histotype(line)
+    return None
+
+
+def rule_cervical_stroma(pathology: str) -> bool | None:
+    value = cervical_from_text(pathology)
+    if value is not None:
+        return value
+    if positive_clauses(pathology, r"(?:侵犯|累及|浸润)宫颈管?间质|宫颈管?间质[^，,。;；]{0,6}(?:浸润|受累|侵犯|见癌)"):
+        return True
+    return None
+
+
+def rule_extent(state: str) -> str | None:
+    """Highest extrauterine site. Peritoneal and distant sites come from free text, the
+    template cells give adnexa, serosa, vagina and parametrium."""
+    pathology = sections(state, "病理")
+    pairs = fields(pathology)
+    imaging_surgery = sections(state, "影像") + "\n" + sections(state, "手术")
+    if (
+        _any_field_positive(pairs, r"腹股沟淋巴结")
+        or positive_clauses(pathology + "\n" + imaging_surgery,
+                            r"(?:肺|肝实质|骨|脑|腹股沟|锁骨上|膈脚后|纵隔)[^。;；]{0,12}转移")
+    ):
+        return "distant"
+    if (
+        any(is_positive(value) and re.search(r"大网膜|结肠旁沟|肠系膜|膈肌|肝表面|肝膈面|小肠|腹壁|肝肾隐窝|脾", value[:80])
+            for value in values_of(pairs, r"^其他$|^另送"))
+        or positive_clauses(pathology, r"(?:大网膜|结肠旁沟|肠系膜|膈肌|肝表面|肝膈面|肝肾隐窝|腹壁)[^。;；]{0,16}(?:见癌|癌累及|肿瘤累及|转移|见肉瘤)")
+    ):
+        return "abdominal_peritoneum"
+    if positive_clauses(pathology, r"(?:膀胱|直肠)[^，,。;；]{0,6}(?:粘|黏)膜[^，,。;；]{0,6}(?:见癌|累及|浸润)"):
+        return "bladder_bowel_mucosa"
+    if (
+        any(is_positive(value) and re.search(r"腹膜|直肠前壁|膀胱反折|膀胱腹膜|盆底|道格拉斯|子宫直肠", value[:60])
+            for value in values_of(pairs, r"^其他$|^另送"))
+        or positive_clauses(pathology, r"(?:盆底腹膜|膀胱反折腹膜|膀胱腹膜|直肠前壁|盆腔腹膜)[^。;；]{0,12}(?:见癌|癌累及|肿瘤累及|转移)")
+    ):
+        return "pelvic_peritoneum"
+    template = extent_from_text(pathology)
+    if template in ("vagina_parametrium", "adnexa", "serosa"):
+        return template
+    if positive_clauses(pathology, r"(?:阴道壁?|宫旁)[^，,。;；]{0,6}(?:受累|浸润|侵犯|见癌|累及)"):
+        return "vagina_parametrium"
+    if positive_clauses(pathology, r"(?:附件|卵巢|输卵管)[^，,。;；]{0,6}(?:受累|浸润|侵犯|见癌|累及)"):
+        return "adnexa"
+    if positive_clauses(pathology, r"(?:侵及|达|穿透|累及)浆膜"):
+        return "serosa"
+    return template
+
+
+_P53 = re.compile(r"[Pp]53\s*[（(]([^）)]{1,12})[）)]")
+_MMR = re.compile(r"(MLH1|PMS2|MSH2|MSH6)\s*(?:\([^)]{0,6}\))?\s*[（(]([^）)]{1,10})[）)]")
+
+
+def rule_p53(ihc: str) -> bool | None:
+    hits = _P53.findall(ihc)
+    if not hits:
+        return None
+    for cell in hits:
+        found = normalize_p53(f"P53（{cell}）")
+        if found is not None:
+            return found
+    return None
+
+
+def rule_mmr(ihc: str) -> bool | None:
+    hits = _MMR.findall(ihc)
+    if not hits:
+        return None
+    if any(re.fullmatch(r"\s*[-－]\s*|少量-|缺失", cell) for _, cell in hits):
+        return True
+    return False
+
+
+_POLE_HOTSPOT = re.compile(
+    r"POLE[^。；;]{0,60}(?:P286R|V411L|S459F|A456P|S297F|F367S|L424[IV]|M295R|P436R|M444K|A428T"
+    r"|Pro286Arg|Val411Leu|Ser459Phe|Ala456Pro|Ser297Phe|Phe367Ser|Leu424(?:Ile|Val)|Met295Arg|Pro436Arg|Met444Lys|Ala428Thr)"
+)
+_POLE_DETECTED = re.compile(r"检测到POLE基因[^。；;]{0,40}(?:已报道的)?(?:可能)?致病")
+_POLE_UNCERTAIN = re.compile(r"POLE[^。；;]{0,60}(?:意义尚不明确|意义未明|VUS)")
+
+
+def rule_pole(molecular: str) -> bool | None:
+    """Pathogenic exonuclease-domain hotspot stated for POLE; a 'detected ... pathogenic'
+    sentence counts too. Negations ('未检测到') and variants of uncertain significance
+    do not, and a report that lists no POLE variant is False. None without a report."""
+    if not molecular.strip():
+        return None
+    if _POLE_HOTSPOT.search(molecular):
+        return True
+    if _POLE_DETECTED.search(molecular) and not _POLE_UNCERTAIN.search(molecular):
+        return True
+    return False
+
+
 # ---- driver -----------------------------------------------------------------
 
 
 def predict_rules(state: str) -> dict:
     """Rule answers in option-name form; None where no rule fired."""
     pathology = sections(state, "病理")
+    ihc = sections(state, "免疫组化") + "\n" + pathology
+    molecular = sections(state, "分子病理")
     muscle = rule_muscle(pathology)
     nodes = rule_nodes(pathology)
     lvsi = rule_lvsi(pathology)
     grade = rule_grade(pathology)
-    return {
+    histotype = rule_histotype(pathology)
+    cervical = rule_cervical_stroma(pathology)
+    extent = rule_extent(state)
+    p53 = rule_p53(ihc)
+    mmr = rule_mmr(ihc)
+    pole = rule_pole(molecular)
+    answers = {
         "muscle_invasion": None if muscle is None else MUSCLE_CRITERIA[muscle],
         "lvsi": None if lvsi is None else str(lvsi).lower(),
         "lymph_node": nodes,
         "grade": None if grade is None else GRADE_CRITERIA[grade],
         "figo": rule_figo(state, muscle, nodes),
+        "histotype": histotype,
+        "cervical_stroma": None if cervical is None else str(cervical).lower(),
+        "extent": extent,
+        "p53": None if p53 is None else str(p53).lower(),
+        "mmr": None if mmr is None else str(mmr).lower(),
+        "pole": None if pole is None else str(pole).lower(),
+    }
+    return answers
+
+
+def composed_rule_stages(answers: dict, defaults: dict, gold_stage: str | None) -> dict:
+    """The 2023 stage from the component rules, after the same defaults that score
+    the components fill the blanks (no extrauterine site, no POLE, train majority
+    elsewhere). `figo2023` reads the molecular class from the notes;
+    `figo2023_composed_given` takes it as structured input, like `evaluate` does."""
+    filled = dict(answers)
+    for qid in COMPONENT_QIDS:
+        if filled.get(qid) is None:
+            filled[qid] = {"extent": "none", "pole": "false"}.get(qid, defaults.get(qid))
+    notes_only = stage_from_predictions(filled)
+    # The rule system has no direct stage head, so its `figo2023` *is* the composed
+    # answer; it is written under both names so the CV tables line up with the model.
+    return {
+        "figo2023": notes_only,
+        "figo2023_composed": notes_only,
+        "figo2023_composed_given": stage_from_predictions(filled, molecular_from_stage(gold_stage) or "NSMP"),
     }
 
 
@@ -293,13 +443,19 @@ def score_rules(records, defaults, rows=None) -> tuple[dict, dict]:
     asked = Counter()
     for index, record in enumerate(records):
         answers = predict_rules(record["state"])
-        for qid, question in record["questions"].items():
+        questions = dict(record["questions"])
+        if "figo2023" in questions:
+            gold_stage = questions["figo2023"]["label"]
+            answers.update(composed_rule_stages(answers, defaults, gold_stage))
+            for qid in COMPOSED_QIDS:
+                questions[qid] = questions["figo2023"]
+        for qid, question in questions.items():
             asked[qid] += 1
             answer = answers.get(qid)
             if answer is not None:
                 fired[qid] += 1
             else:
-                answer = defaults[qid]
+                answer = defaults.get(qid, "none")
             buckets[qid]["golds"].append(gold_name(question))
             buckets[qid]["preds"].append(answer)
             if rows is not None:
